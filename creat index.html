@@ -1,0 +1,785 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+
+// ==========================================
+// 1. TYPES & INTERFACES
+// ==========================================
+export interface UserProfile {
+  ageGroup: string;
+}
+
+export interface VocabularyItem {
+  word: string;
+  emoji: string;
+  category: string;
+  description: string;
+  ageGroup: string;
+}
+
+interface BalloonItem {
+  id: string;
+  letter: string;
+  x: number;          // Left position percentage (0 - 85)
+  speed: number;      // Seconds to float up (animation-duration)
+  delay: number;      // Seconds to wait before starting
+  color: string;      // Tailwind color scheme index
+  wobbleType: number; // Different animation variants
+  scale: number;      // Size variation multiplier
+}
+
+// ==========================================
+// 2. EXTENDED VOCABULARY DATABASE
+// ==========================================
+export const VOCABULARY_DATA: VocabularyItem[] = [
+  { word: 'cat', emoji: '🐱', category: 'animals', description: 'A small animal that says meow!', ageGroup: 'all' },
+  { word: 'dog', emoji: '🐶', category: 'animals', description: 'A friendly animal that barks!', ageGroup: 'all' },
+  { word: 'frog', emoji: '🐸', category: 'animals', description: 'A green hopper that loves to go ribbit!', ageGroup: 'all' },
+  { word: 'lion', emoji: '🦁', category: 'animals', description: 'The king of the jungle with a big roar!', ageGroup: 'all' },
+  { word: 'fish', emoji: '🐟', category: 'animals', description: 'Splashes and swims under the water!', ageGroup: 'all' },
+  { word: 'bird', emoji: '🐦', category: 'animals', description: 'A cute feathered friend that sings in trees!', ageGroup: 'all' },
+  { word: 'apple', emoji: '🍎', category: 'food', description: 'A sweet, crunchy red fruit!', ageGroup: 'all' },
+  { word: 'pear', emoji: '🍐', category: 'food', description: 'A sweet green fruit shaped like a teardrop.', ageGroup: 'all' },
+  { word: 'milk', emoji: '🥛', category: 'food', description: 'A healthy drink that builds strong bones!', ageGroup: 'all' },
+  { word: 'cake', emoji: '🍰', category: 'food', description: 'A sweet treat with candles and frosting!', ageGroup: 'all' },
+  { word: 'grape', emoji: '🍇', category: 'food', description: 'Small, round, purple berries in a bunch.', ageGroup: 'all' },
+  { word: 'star', emoji: '⭐', category: 'nature', description: 'Shines bright in the night sky!', ageGroup: 'all' },
+  { word: 'sun', emoji: '☀️', category: 'nature', description: 'Big bright yellow light that warms the day!', ageGroup: 'all' },
+  { word: 'tree', emoji: '🌳', category: 'nature', description: 'A tall plant with green leaves and a trunk.', ageGroup: 'all' },
+  { word: 'moon', emoji: '🌙', category: 'nature', description: 'Glows softly in the sky when you go to bed.', ageGroup: 'all' },
+  { word: 'rain', emoji: '🌧️', category: 'nature', description: 'Water droplets falling from fluffy gray clouds.', ageGroup: 'all' },
+  { word: 'car', emoji: '🚗', category: 'things', description: 'A vehicle with four wheels to go vroom!', ageGroup: 'all' },
+  { word: 'ball', emoji: '⚽', category: 'things', description: 'Bouncy and round, perfect for games!', ageGroup: 'all' },
+  { word: 'book', emoji: '📖', category: 'things', description: 'Filled with amazing stories and pictures.', ageGroup: 'all' },
+  { word: 'boat', emoji: '⛵', category: 'things', description: 'Floats gracefully across water.', ageGroup: 'all' }
+];
+
+// Pastel color classes for balloons
+const BALLOON_COLORS = [
+  'from-pink-400 to-rose-500 shadow-rose-200 text-rose-50 border-rose-300',
+  'from-sky-400 to-blue-500 shadow-blue-200 text-blue-50 border-blue-300',
+  'from-emerald-400 to-teal-500 shadow-emerald-200 text-emerald-50 border-emerald-300',
+  'from-amber-400 to-orange-500 shadow-amber-200 text-amber-50 border-amber-300',
+  'from-purple-400 to-indigo-500 shadow-purple-200 text-purple-50 border-purple-300',
+  'from-fuchsia-400 to-pink-500 shadow-fuchsia-200 text-fuchsia-50 border-fuchsia-300'
+];
+
+// ==========================================
+// 3. SYNTHETIC AUDIO UTILITIES (Web Audio API)
+// ==========================================
+let audioCtx: AudioContext | null = null;
+
+const getAudioContext = (): AudioContext => {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+};
+
+export const playPopSound = () => {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    
+    // Short pitch drop & popping transient
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(150, now);
+    osc.frequency.exponentialRampToValueAtTime(800, now + 0.08);
+    
+    gainNode.gain.setValueAtTime(0.2, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.09);
+  } catch (e) {
+    console.error('Audio failed', e);
+  }
+};
+
+export const playSuccessSound = () => {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    
+    // Play sweet arpeggio (C5 -> E5 -> G5)
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+      
+      gainNode.gain.setValueAtTime(0, now + idx * 0.08);
+      gainNode.gain.linearRampToValueAtTime(0.15, now + idx * 0.08 + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.25);
+      
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      osc.start(now + idx * 0.08);
+      osc.stop(now + idx * 0.08 + 0.3);
+    });
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+export const playFailSound = () => {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    
+    // Downward sad frequency sweep
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.linearRampToValueAtTime(110, now + 0.25);
+    
+    gainNode.gain.setValueAtTime(0.12, now);
+    gainNode.gain.linearRampToValueAtTime(0.001, now + 0.25);
+    
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.26);
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+export const playWinSound = () => {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    
+    // Play celebratory chord sequence
+    const chords = [
+      [261.63, 329.63, 392.00], // C4, E4, G4
+      [349.23, 440.00, 523.25], // F4, A4, C5
+      [392.00, 493.88, 587.33], // G4, B4, D5
+      [523.25, 659.25, 783.99, 1046.50] // C5, E5, G5, C6 (Power Chord!)
+    ];
+    
+    chords.forEach((frequencies, chordIdx) => {
+      frequencies.forEach((freq) => {
+        const osc = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + chordIdx * 0.18);
+        
+        gainNode.gain.setValueAtTime(0, now + chordIdx * 0.18);
+        gainNode.gain.linearRampToValueAtTime(0.08, now + chordIdx * 0.18 + 0.03);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, now + chordIdx * 0.18 + 0.4);
+        
+        osc.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        osc.start(now + chordIdx * 0.18);
+        osc.stop(now + chordIdx * 0.18 + 0.5);
+      });
+    });
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+export const playClickSound = () => {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, now);
+    
+    gainNode.gain.setValueAtTime(0.15, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.06);
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+export const speakWord = (word: string) => {
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel(); // Interrupt old speech
+    const utterance = new SpeechSynthesisUtterance(word);
+    utterance.rate = 0.75; // Slower, child-friendly rate
+    utterance.pitch = 1.3; // Cute high pitch voice
+    window.speechSynthesis.speak(utterance);
+  }
+};
+
+export const speakLetter = (letter: string) => {
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(letter.toUpperCase());
+    utterance.rate = 0.85;
+    utterance.pitch = 1.4;
+    window.speechSynthesis.speak(utterance);
+  }
+};
+
+// ==========================================
+// 4. SPELLING BALLOON GAME COMPONENT
+// ==========================================
+interface SpellingBalloonProps {
+  profile: UserProfile;
+  onUpdateStars: (stars: number) => void;
+  onBack: () => void;
+}
+
+export function SpellingBalloon({ profile, onUpdateStars, onBack }: SpellingBalloonProps) {
+  // Game states
+  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [currentWordIndex, setCurrentWordIndex] = useState(0);
+  const [guessIndex, setGuessIndex] = useState(0); // Which character index we are currently looking for
+  const [score, setScore] = useState(0);
+  const [consecutiveWins, setConsecutiveWins] = useState(0);
+  const [balloons, setBalloons] = useState<BalloonItem[]>([]);
+  const [poppedIds, setPoppedIds] = useState<Set<string>>(new Set());
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);
+  const [isWrongSpelling, setIsWrongSpelling] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [confetti, setConfetti] = useState<{ id: number; x: number; color: string; scale: number }[]>([]);
+
+  // Refs for tracking balloon spawning
+  const gameAreaRef = useRef<HTMLDivElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Categories list
+  const categories = ['all', 'animals', 'food', 'nature', 'things'];
+
+  // Filter word list based on category
+  const filteredWords = useMemo(() => {
+    return VOCABULARY_DATA.filter(
+      (item) => activeCategory === 'all' || item.category === activeCategory
+    );
+  }, [activeCategory]);
+
+  const currentWordItem = useMemo(() => {
+    if (filteredWords.length === 0) return null;
+    const safeIndex = currentWordIndex % filteredWords.length;
+    return filteredWords[safeIndex];
+  }, [filteredWords, currentWordIndex]);
+
+  // Read word immediately when selected or started
+  useEffect(() => {
+    if (currentWordItem && !showIntro && voiceEnabled) {
+      const introTimer = setTimeout(() => {
+        speakWord(`Spell the word: ${currentWordItem.word}`);
+      }, 500);
+      return () => clearTimeout(introTimer);
+    }
+  }, [currentWordItem, showIntro, voiceEnabled]);
+
+  // Generate Balloons containing spelling targets + distractor letters
+  const generateBalloons = () => {
+    if (!currentWordItem) return;
+    
+    const wordLetters = currentWordItem.word.toUpperCase().split('');
+    const targetLetter = wordLetters[guessIndex];
+    if (!targetLetter) return;
+
+    // Build unique ID sets to ensure at least 2 balloons with the correct target letter
+    // and several random distractor letters
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const balloonList: BalloonItem[] = [];
+
+    // 1. Add correct targets
+    const targetCount = 2; // Keep 2 targets active
+    for (let i = 0; i < targetCount; i++) {
+      balloonList.push(createSingleBalloon(targetLetter));
+    }
+
+    // 2. Add other letters from the current word (good spelling practice!)
+    const wordDistractors = wordLetters.filter(l => l !== targetLetter);
+    wordDistractors.forEach(letter => {
+      balloonList.push(createSingleBalloon(letter));
+    });
+
+    // 3. Add random letters to fill space up to 7-8 balloons
+    const totalDesired = 8;
+    while (balloonList.length < totalDesired) {
+      const randomLetter = alphabet[Math.floor(Math.random() * alphabet.length)];
+      balloonList.push(createSingleBalloon(randomLetter));
+    }
+
+    // Shuffle and space out starting X positions to reduce overlapping
+    const shuffled = balloonList.sort(() => Math.random() - 0.5);
+    const spacing = 95 / shuffled.length;
+    const positioned = shuffled.map((balloon, index) => ({
+      ...balloon,
+      x: Math.round(index * spacing + Math.random() * (spacing / 2))
+    }));
+
+    setBalloons(positioned);
+    setPoppedIds(new Set());
+  };
+
+  const createSingleBalloon = (letter: string): BalloonItem => {
+    return {
+      id: Math.random().toString(36).substr(2, 9),
+      letter,
+      x: Math.random() * 85,
+      speed: 6 + Math.random() * 5, // 6 to 11 seconds to rise to top
+      delay: Math.random() * 3,      // Spaced-out start delay
+      color: BALLOON_COLORS[Math.floor(Math.random() * BALLOON_COLORS.length)],
+      wobbleType: Math.floor(Math.random() * 3) + 1,
+      scale: 0.85 + Math.random() * 0.3
+    };
+  };
+
+  // Generate balloons whenever the word index or guess target changes
+  useEffect(() => {
+    if (!showIntro && currentWordItem) {
+      generateBalloons();
+    }
+  }, [currentWordIndex, guessIndex, showIntro, activeCategory]);
+
+  // Restart word spelled validation / transition to next word
+  const triggerConfetti = () => {
+    const list = Array.from({ length: 40 }).map((_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      color: ['#FF5A5F', '#FFB400', '#007A87', '#8CE071', '#FC642D', '#D1A25B', '#4F46E5'][Math.floor(Math.random() * 7)],
+      scale: 0.5 + Math.random() * 1.5
+    }));
+    setConfetti(list);
+    setTimeout(() => setConfetti([]), 3500);
+  };
+
+  const handleCorrectPop = (balloon: BalloonItem) => {
+    playPopSound();
+    
+    const newPopped = new Set(poppedIds);
+    newPopped.add(balloon.id);
+    setPoppedIds(newPopped);
+
+    if (voiceEnabled) {
+      speakLetter(balloon.letter);
+    }
+
+    // Check if word complete
+    if (currentWordItem && guessIndex + 1 === currentWordItem.word.length) {
+      // Word Completed Successfully!
+      triggerConfetti();
+      playSuccessSound();
+      setScore(prev => {
+        const newScore = prev + 10;
+        onUpdateStars(newScore);
+        return newScore;
+      });
+      setConsecutiveWins(prev => prev + 1);
+      setIsCompleted(true);
+      
+      if (voiceEnabled) {
+        setTimeout(() => {
+          speakWord(`Great job! ${currentWordItem.word}. ${currentWordItem.description}`);
+        }, 300);
+      }
+    } else {
+      // Move to next letter
+      setGuessIndex(prev => prev + 1);
+    }
+  };
+
+  const handleIncorrectPop = (balloon: BalloonItem) => {
+    playFailSound();
+    setIsWrongSpelling(true);
+    
+    // Animate a cute little mistake pop
+    const newPopped = new Set(poppedIds);
+    newPopped.add(balloon.id);
+    setPoppedIds(newPopped);
+
+    if (voiceEnabled && currentWordItem) {
+      speakWord(`No, look for the letter: ${currentWordItem.word[guessIndex].toUpperCase()}`);
+    }
+
+    setTimeout(() => {
+      setIsWrongSpelling(false);
+      // Re-generate current state balloon set to keep playing
+      generateBalloons();
+    }, 1200);
+  };
+
+  const handleBalloonClick = (balloon: BalloonItem) => {
+    if (isCompleted || poppedIds.has(balloon.id)) return;
+
+    if (currentWordItem) {
+      const correctLetter = currentWordItem.word[guessIndex].toUpperCase();
+      if (balloon.letter === correctLetter) {
+        handleCorrectPop(balloon);
+      } else {
+        handleIncorrectPop(balloon);
+      }
+    }
+  };
+
+  const handleNextWord = () => {
+    playClickSound();
+    setGuessIndex(0);
+    setIsCompleted(false);
+    setCurrentWordIndex(prev => prev + 1);
+  };
+
+  const handleResetGame = () => {
+    playClickSound();
+    setScore(0);
+    setGuessIndex(0);
+    setCurrentWordIndex(0);
+    setConsecutiveWins(0);
+    setIsCompleted(false);
+    setShowIntro(true);
+  };
+
+  const startGame = () => {
+    getAudioContext(); // Initialize context on user action
+    playClickSound();
+    setShowIntro(false);
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto min-h-[82vh] bg-gradient-to-b from-cyan-100 via-sky-100 to-indigo-100 rounded-3xl shadow-2xl border-4 border-white overflow-hidden flex flex-col relative select-none">
+      
+      {/* 5. FLOATING CONFETTI OVERLAY */}
+      {confetti.map((c) => (
+        <div
+          key={c.id}
+          className="absolute z-50 pointer-events-none rounded-full animate-ping"
+          style={{
+            left: `${c.x}%`,
+            top: `${Math.random() * 50 + 20}%`,
+            width: `${12 * c.scale}px`,
+            height: `${12 * c.scale}px`,
+            backgroundColor: c.color,
+            animationDuration: `${1.2 + Math.random() * 1.5}s`,
+          }}
+        />
+      ))}
+
+      {/* 6. TOP CONTROL HEADER */}
+      <header className="bg-white/80 backdrop-blur-md px-6 py-4 flex flex-wrap items-center justify-between border-b-2 border-sky-200/50 relative z-30">
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={() => {
+              playClickSound();
+              onBack();
+            }}
+            className="flex items-center space-x-1 bg-white hover:bg-rose-50 text-rose-500 font-bold px-4 py-2.5 rounded-2xl shadow-sm border-2 border-rose-100 transition-transform active:scale-95 text-sm"
+          >
+            <span>🏠</span>
+            <span>Exit Game</span>
+          </button>
+          
+          <button
+            onClick={() => {
+              playClickSound();
+              setVoiceEnabled(prev => !prev);
+            }}
+            className={`p-2.5 rounded-2xl border-2 transition-colors ${
+              voiceEnabled 
+                ? 'bg-amber-100 text-amber-600 border-amber-300 hover:bg-amber-200' 
+                : 'bg-slate-100 text-slate-400 border-slate-300 hover:bg-slate-200'
+            }`}
+            title={voiceEnabled ? "Mute Voice" : "Enable Voice"}
+          >
+            {voiceEnabled ? '🔊' : '🔇'}
+          </button>
+        </div>
+
+        {/* Word category toggle tabs (Only shown when not in intro) */}
+        {!showIntro && !isCompleted && (
+          <div className="flex bg-sky-50/80 p-1 rounded-2xl border border-sky-100 gap-1 my-2 sm:my-0">
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => {
+                  playClickSound();
+                  setActiveCategory(cat);
+                  setCurrentWordIndex(0);
+                  setGuessIndex(0);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize transition-colors ${
+                  activeCategory === cat
+                    ? 'bg-sky-500 text-white shadow-md'
+                    : 'text-sky-700 hover:bg-sky-100'
+                }`}
+              >
+                {cat === 'all' ? 'All Words' : cat}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Star Counter */}
+        <div className="flex items-center space-x-2 bg-amber-100 border-2 border-amber-300 px-4 py-2 rounded-2xl shadow-sm">
+          <span className="text-xl animate-bounce">⭐</span>
+          <span className="text-amber-800 font-black text-lg">{score} <span className="text-xs font-bold">Stars</span></span>
+        </div>
+      </header>
+
+      {/* 7. INTRO SCREEN */}
+      {showIntro ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center relative z-20">
+          <div className="absolute top-10 left-10 text-6xl animate-pulse select-none">🎈</div>
+          <div className="absolute bottom-12 right-12 text-6xl animate-pulse select-none" style={{ animationDelay: '1s' }}>🎈</div>
+          
+          <div className="max-w-md bg-white/95 p-8 rounded-3xl shadow-xl border-4 border-sky-400 relative">
+            <span className="text-7xl block mb-4 animate-bounce">🎈🦄</span>
+            <h1 className="text-4xl font-extrabold text-sky-600 mb-3 tracking-wide">
+              Spelling Balloons!
+            </h1>
+            <p className="text-slate-600 text-base mb-6 font-medium leading-relaxed">
+              Pop the magical floating letter balloons in the correct order to spell cute words and collect shiny stars! 🌟
+            </p>
+            
+            <button
+              onClick={startGame}
+              className="w-full bg-gradient-to-r from-emerald-400 to-green-500 hover:from-emerald-500 hover:to-green-600 text-white font-black text-xl py-4 px-8 rounded-2xl shadow-lg border-b-8 border-green-700 transition-all transform hover:-translate-y-1 active:translate-y-0 active:border-b-2"
+            >
+              Let's Play! 🚀
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* 8. ACTIVE GAMEPLAY CONTAINER */
+        <div className="flex-1 flex flex-col relative overflow-hidden">
+          
+          {/* Animated decorative sky elements */}
+          <div className="absolute top-4 left-6 pointer-events-none opacity-45 animate-pulse text-4xl">☁️</div>
+          <div className="absolute top-8 right-24 pointer-events-none opacity-30 animate-pulse text-5xl" style={{ animationDelay: '2.5s' }}>☁️</div>
+
+          {/* Spell Status Dashboard */}
+          {currentWordItem && !isCompleted && (
+            <div className="w-full bg-white/80 border-b border-sky-100 p-4 relative z-20 flex flex-col items-center">
+              
+              {/* Emoji Card and Helper description */}
+              <div className="flex items-center space-x-4 bg-white/95 px-6 py-3 rounded-2xl shadow-md border-2 border-indigo-100 mb-3 max-w-lg w-full">
+                <span className="text-4xl animate-bounce select-none">{currentWordItem.emoji}</span>
+                <div className="flex-1">
+                  <span className="text-xs font-bold text-sky-500 uppercase tracking-wider">{currentWordItem.category}</span>
+                  <p className="text-slate-700 font-bold text-sm leading-snug">{currentWordItem.description}</p>
+                </div>
+                <button
+                  onClick={() => speakWord(currentWordItem.word)}
+                  className="bg-sky-100 hover:bg-sky-200 text-sky-600 p-2 rounded-xl transition-transform active:scale-95"
+                  title="Read Word Out Loud"
+                >
+                  🔊 Repeat
+                </button>
+              </div>
+
+              {/* Spelled Letter Trackers */}
+              <div className="flex items-center space-x-3 justify-center py-2">
+                {currentWordItem.word.toUpperCase().split('').map((letter, idx) => {
+                  const isGuessed = idx < guessIndex;
+                  const isCurrent = idx === guessIndex;
+                  return (
+                    <div
+                      key={idx}
+                      className={`w-14 h-16 rounded-2xl flex items-center justify-center font-black text-2xl transition-all duration-300 border-3 ${
+                        isGuessed
+                          ? 'bg-emerald-500 text-white border-emerald-600 scale-100 shadow-md'
+                          : isCurrent
+                          ? `bg-amber-100 text-amber-800 border-amber-400 scale-110 shadow-lg animate-pulse ${
+                              isWrongSpelling ? 'bg-red-200 border-red-500 animate-shake' : ''
+                            }`
+                          : 'bg-slate-100 text-slate-300 border-slate-300'
+                      }`}
+                    >
+                      {isGuessed ? letter : isCurrent ? '?' : ''}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Helper indicator reminding the exact next letter */}
+              <div className="text-xs font-extrabold text-slate-500 mt-1">
+                Pop the balloon with: <span className="text-amber-500 text-base font-black px-1.5 py-0.5 rounded-lg bg-amber-100">{currentWordItem.word[guessIndex]?.toUpperCase()}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Balloon Physics/Float Sandbox Area */}
+          {!isCompleted && currentWordItem && (
+            <div
+              ref={gameAreaRef}
+              className="flex-1 relative w-full overflow-hidden"
+            >
+              {balloons.map((balloon) => {
+                const isPopped = poppedIds.has(balloon.id);
+                return (
+                  <div
+                    key={balloon.id}
+                    onClick={() => handleBalloonClick(balloon)}
+                    className={`absolute bottom-[-150px] cursor-pointer touch-none transition-transform duration-150 active:scale-90 ${
+                      isPopped ? 'scale-0 opacity-0 pointer-events-none' : ''
+                    }`}
+                    style={{
+                      left: `${balloon.x}%`,
+                      transform: `scale(${balloon.scale})`,
+                      animationName: `floatUp, sway${balloon.wobbleType}`,
+                      animationDuration: `${balloon.speed}s, 4s`,
+                      animationTimingFunction: 'linear, ease-in-out',
+                      animationIterationCount: 'infinite, infinite',
+                      animationDelay: `${balloon.delay}s`,
+                    }}
+                  >
+                    {/* SVG Graphic Balloon */}
+                    <div className="relative group select-none">
+                      <div className={`w-20 h-24 rounded-full bg-gradient-to-tr ${balloon.color} border-2 flex flex-col items-center justify-center shadow-lg relative overflow-hidden`}>
+                        {/* Balloon Reflection Highlight */}
+                        <div className="absolute top-2 left-3 w-4 h-6 bg-white/45 rounded-full rotate-12 pointer-events-none" />
+                        
+                        {/* Letter in Center */}
+                        <span className="font-black text-4xl tracking-tight drop-shadow-md z-10">
+                          {balloon.letter}
+                        </span>
+                      </div>
+                      
+                      {/* Little Basket/Triangle tie at the bottom of balloon */}
+                      <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-b-[10px] border-b-slate-400/80 mx-auto -mt-[1px] rotate-180" />
+                      {/* Balloon String */}
+                      <div className="w-1 h-14 bg-slate-400/40 mx-auto rounded-full -mt-0.5" />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 9. WORD COMPLETED CARD (WIN MODAL) */}
+          {isCompleted && currentWordItem && (
+            <div className="flex-1 flex items-center justify-center p-6 relative z-30">
+              <div className="max-w-md w-full bg-white rounded-3xl p-8 text-center shadow-2xl border-4 border-emerald-400 animate-bounceOnce">
+                <span className="text-8xl block mb-2 select-none animate-bounce">{currentWordItem.emoji}</span>
+                <h2 className="text-3xl font-extrabold text-emerald-600 mb-2 tracking-wide capitalize">
+                  Awesome! Correct!
+                </h2>
+                <div className="text-2xl font-black text-slate-800 tracking-wider mb-2">
+                  {currentWordItem.word.toUpperCase()}
+                </div>
+                <p className="text-slate-600 font-medium mb-6">
+                  "{currentWordItem.description}"
+                </p>
+
+                <div className="bg-emerald-50 rounded-2xl p-4 mb-6 border border-emerald-100 flex items-center justify-between">
+                  <div className="text-left">
+                    <span className="text-xs font-bold text-emerald-600 block uppercase">Reward</span>
+                    <span className="font-extrabold text-slate-700 text-sm">Perfect Spelling Bonus</span>
+                  </div>
+                  <div className="flex items-center space-x-1 bg-amber-400 text-white px-3 py-1.5 rounded-xl font-bold">
+                    <span>⭐</span>
+                    <span>+10 Stars</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleNextWord}
+                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-lg py-4 px-6 rounded-2xl shadow-lg hover:shadow-xl transition-all border-b-4 border-emerald-700 active:border-b-0 active:translate-y-1"
+                >
+                  Next Word! ➔
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 10. EXTRA CUTE CSS KEYFRAME INJECTIONS */}
+      <style>{`
+        /* Rising Float Motion */
+        @keyframes floatUp {
+          0% {
+            transform: translateY(100vh);
+          }
+          100% {
+            transform: translateY(-150vh);
+          }
+        }
+
+        /* Wobble Sway Motion Types */
+        @keyframes sway1 {
+          0%, 100% { margin-left: 0px; }
+          50% { margin-left: 30px; }
+        }
+        @keyframes sway2 {
+          0%, 100% { margin-left: 0px; }
+          50% { margin-left: -25px; }
+        }
+        @keyframes sway3 {
+          0%, 100% { margin-left: -10px; }
+          50% { margin-left: 15px; }
+        }
+
+        /* Shake animation for spelling failure */
+        @keyframes shake {
+          0%, 100% { transform: translateX(0) scale(1.1); }
+          25% { transform: translateX(-8px) scale(1.1); }
+          75% { transform: translateX(8px) scale(1.1); }
+        }
+        .animate-shake {
+          animation: shake 0.25s ease-in-out double;
+        }
+
+        /* Bounce once when card mounts */
+        @keyframes bounceOnce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-12px); }
+        }
+        .animate-bounceOnce {
+          animation: bounceOnce 0.6s ease-out;
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ==========================================
+// 11. MAIN ENTRY APP HOST COMPONENT
+// ==========================================
+export default function App() {
+  const [profile] = useState<UserProfile>({ ageGroup: 'all' });
+  const [totalStars, setTotalStars] = useState(0);
+
+  const handleUpdateStars = (stars: number) => {
+    setTotalStars(stars);
+  };
+
+  const handleBackToMain = () => {
+    // Reset/Exit actions if implementing multi-app navigation, otherwise silent
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 p-3 md:p-6 flex items-center justify-center">
+      <div className="w-full">
+        <SpellingBalloon
+          profile={profile}
+          onUpdateStars={handleUpdateStars}
+          onBack={handleBackToMain}
+        />
+      </div>
+    </div>
+  );
+}
